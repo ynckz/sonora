@@ -14,6 +14,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Play SoundCloud tracks blocked in your country by routing SoundCloud through a proxy. Set it in
   Settings → Playback under Network.
 
+### Fixed
+
+- The buffer size in Settings → Sound no longer sticks at 480 frames on Windows. The default is
+  larger, and the buffer can be raised further, so a busy system no longer cuts the sound into
+  short dropouts.
+- When the system invalidates the audio stream, playback opens it again and carries on from where
+  it was, instead of restarting the engine and falling silent for a moment.
+
 ## [0.44.2] - 2026-10-25
 
 ### Fixed

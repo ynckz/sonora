@@ -128,15 +128,24 @@ impl SettingsView {
     /// reopens with.
     pub(super) fn buffer_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let outputs = self.outputs.read(cx);
+        let device = outputs.current();
         let current = outputs.buffer(cx);
-        let buffers = outputs
-            .current()
+        let rate = device.map(|device| device.format.rate);
+        let buffers = device
             .map(|device| device.buffers.clone())
             .unwrap_or_default();
         let locked = outputs.switching();
-        let buffer = current
-            .map(|frames| SharedString::from(frames.to_string()))
-            .unwrap_or_else(|| t!("settings-output-idle"));
+        let buffer = match (current, rate) {
+            (Some(frames), Some(rate)) => {
+                let ms = f64::from(frames) * 1_000. / f64::from(rate.max(1));
+                t!(
+                    "settings-buffer-value",
+                    frames = frames,
+                    ms = format!("{ms:.1}")
+                )
+            }
+            _ => t!("settings-output-idle"),
+        };
         let stepper = current.filter(|_| buffers.len() > 1).map(|current| {
             output_stepper("buffer", current, &buffers, locked, Outputs::set_buffer, cx)
         });

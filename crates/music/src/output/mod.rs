@@ -39,12 +39,16 @@ use crate::audio::{self, Chain};
 use output_host::host;
 
 /// The buffer asked of the device, in frames, as far as the device allows it, when none is
-/// chosen in settings.
+/// chosen in settings. WASAPI's shared mode plays in periods of about 10 ms, so its buffer is
+/// the only slack the device gets: a larger default rides out a callback the system held up.
+#[cfg(target_os = "windows")]
+const BUFFER_FRAMES: u32 = 2048;
+#[cfg(not(target_os = "windows"))]
 const BUFFER_FRAMES: u32 = 1024;
 
 /// The buffers, in frames, that can be chosen in settings. Below the sound server's quantum the
 /// device underruns, and above it every pause and seek is heard late.
-const BUFFERS: [u32; 6] = [128, 256, 512, 1024, 2048, 4096];
+const BUFFERS: [u32; 7] = [128, 256, 512, 1024, 2048, 4096, 8192];
 
 /// How often an open stream checks that its device is still the one `resolve_device` names and
 /// still runs at the stream's rate, and reads its sink again.
@@ -444,13 +448,10 @@ impl Device {
         !self.failed.load(Ordering::Acquire) && !self.stale.load(Ordering::Acquire)
     }
 
-    /// Whether the stream has to reopen. That is when it reported an error, when `resolve_device`
-    /// now picks another device or none at all, or when the device has switched to another
-    /// sample rate.
+    /// Whether the stream has to reopen. That is when `resolve_device` now picks another device
+    /// or none at all, or when the device has switched to another sample rate. A stream that
+    /// reported an error is not included: its outputs reopen it themselves, at what was heard.
     fn outdated(&self) -> bool {
-        if self.failed.load(Ordering::Acquire) {
-            return true;
-        }
         let Ok(device) = resolve_device() else {
             return true;
         };
@@ -636,10 +637,10 @@ impl Output {
         self.chain.volume.set(gain);
     }
 
-    /// Whether the stream reported an error or has to reopen, so what this output holds can no
-    /// longer be heard as it should. Every output on the stream sees it.
+    /// Whether the stream reported an error and has to be opened again. A stream retired for a
+    /// rate or buffer picked in settings is not failed: the app rebuilds the engines for that.
     pub fn failed(&self) -> bool {
-        !self.device.live()
+        self.device.failed.load(Ordering::Acquire)
     }
 }
 
@@ -1031,9 +1032,12 @@ fn cpal_describe(device: &cpal::Device) -> (String, Option<String>) {
 /// The buffers in `BUFFERS` that `config` allows, with `buffer`, the one the stream asked for,
 /// lowest first.
 fn buffers(config: &cpal::SupportedStreamConfig, buffer: u32) -> Vec<u32> {
+    let range = buffer_range(config);
     let mut buffers: Vec<u32> = BUFFERS
         .into_iter()
-        .filter(|frames| buffer_range(config).is_none_or(|(min, max)| (min..=max).contains(frames)))
+        .filter(|frames| {
+            range.is_none_or(|(min, max)| *frames >= min && max.is_none_or(|max| *frames <= max))
+        })
         .collect();
     if !buffers.contains(&buffer) {
         buffers.push(buffer);
@@ -1042,12 +1046,16 @@ fn buffers(config: &cpal::SupportedStreamConfig, buffer: u32) -> Vec<u32> {
     buffers
 }
 
-/// The buffers `config` allows, in frames, as `(min, max)`, or `None` when the device does not
-/// say. An empty range says nothing either.
-fn buffer_range(config: &cpal::SupportedStreamConfig) -> Option<(u32, u32)> {
+/// The buffers `config` allows, in frames, as `(min, max)`, `max` being `None` when the device
+/// sets no ceiling, or `None` when the device does not say. An empty range says nothing either.
+///
+/// cpal's WASAPI backend reports the engine's period as both bounds in shared mode, although it
+/// accepts any longer buffer, so a range whose bounds are equal is read as a floor and no ceiling.
+fn buffer_range(config: &cpal::SupportedStreamConfig) -> Option<(u32, Option<u32>)> {
     match *config.buffer_size() {
         cpal::SupportedBufferSize::Range { max: 0, .. } => None,
-        cpal::SupportedBufferSize::Range { min, max } => Some((min, max.max(min))),
+        cpal::SupportedBufferSize::Range { min, max } if max > min => Some((min, Some(max))),
+        cpal::SupportedBufferSize::Range { min, .. } => Some((min, None)),
         cpal::SupportedBufferSize::Unknown => None,
     }
 }
@@ -1062,10 +1070,15 @@ fn open_stream(
     frames: u32,
     failed: &Arc<AtomicBool>,
 ) -> Result<(MixerDeviceSink, u32)> {
+    let wanted = frames;
     let frames = match buffer_range(config) {
-        Some((min, max)) => frames.clamp(min, max),
+        Some((min, Some(max))) => frames.clamp(min, max),
+        Some((min, None)) => frames.max(min),
         None => frames,
     };
+    if frames != wanted {
+        log::info!("output: {wanted} frames is outside the device's buffer range, using {frames}");
+    }
     let latency = f64::from(frames) * 1_000. / f64::from(config.sample_rate().max(1));
     log::info!(
         "output: using {} at {} Hz, {} channels, {}, {frames} frames ({latency:.1} ms)",
@@ -1085,6 +1098,12 @@ fn open_stream(
             cpal::ErrorKind::Xrun => log::debug!("output: buffer underrun"),
             // the server moves a stream that follows the default on its own
             cpal::ErrorKind::DeviceChanged => log::info!("output: the system default moved"),
+            // the device changed its format or another stream took it over; the engine opens
+            // the output again at what was heard
+            cpal::ErrorKind::StreamInvalidated => {
+                log::info!("output: the stream was invalidated, reopening");
+                stream_failed.store(true, Ordering::Release);
+            }
             cpal::ErrorKind::RealtimeDenied => log::debug!("output: {error}"),
             _ => {
                 log::warn!("output: audio output failed: {error}");

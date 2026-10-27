@@ -804,7 +804,13 @@ settings-sample-rate-detail = На какой частоте работает у
 settings-sample-rate-value = { $khz } кГц
 settings-sample-rate-change = Изменить
 settings-buffer = Размер буфера
-settings-buffer-detail = Сколько звука Sonora передаёт устройству за раз
+settings-buffer-detail = Сколько звука Sonora передаёт устройству за раз. Больший буфер лучше переживает нагрузку системы, но задерживает паузу и перемотку
+settings-buffer-value =
+    { $frames ->
+        [one] { $frames } кадр
+        [few] { $frames } кадра
+       *[other] { $frames } кадров
+    } · { $ms } мс
 settings-output-idle = Не играет
 settings-output-device-loading = Загрузка устройств…
 settings-output-failed = Устройство не поддерживается

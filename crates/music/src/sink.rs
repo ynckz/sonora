@@ -54,8 +54,8 @@ impl Admit {
     }
 }
 
-/// The output device went away, another one is wanted, or its rate changed. The engine reopens
-/// rather than carrying on into silence or into a conversion.
+/// The output device went away, another one is wanted, its rate changed, or it would not open
+/// again. The engine is rebuilt rather than carrying on into silence or into a conversion.
 #[derive(Debug)]
 pub struct Gone;
 
@@ -283,8 +283,9 @@ impl Drop for Chunk {
 }
 
 /// The shared rodio output with a paced queue in front of it. A write blocks once enough is
-/// queued, which keeps a decoder in step with playback. A write on an output that has to reopen
-/// reports it gone; the output also says so on `changed` itself, playing or not.
+/// queued, which keeps a decoder in step with playback. A write on an output whose stream failed
+/// opens the output again and returns nothing, and a write that cannot be saved reports it gone;
+/// the output also says so on `changed` itself, playing or not.
 ///
 /// Every packet goes through the resampler as it is written, so everything queued is at the
 /// device's rate already and a pause or a clear acts on it at once. A packet at the device's rate
@@ -292,6 +293,8 @@ impl Drop for Chunk {
 /// the order of what is written without a flush.
 pub struct Paced {
     output: Output,
+    /// A clone of the chain the output runs, so it can be opened again on another stream.
+    chain: Chain,
     cue: Cue,
     /// Chunks appended and not yet played out or retired.
     live: Arc<AtomicUsize>,
@@ -301,33 +304,68 @@ pub struct Paced {
     resampler: RealtimeResampler,
     /// The cue generation the audio the resampler holds belongs to.
     generation: u32,
+    /// Set when a failed output was reopened, so the engine reopens its decoder at what was
+    /// heard.
+    reopened: bool,
 }
 
 impl Paced {
     /// Claims the output device, paused until the caller starts it.
     pub fn open(cue: Cue, chain: Chain, changed: UnboundedSender<()>) -> Result<Self> {
-        let output = Output::open(chain, changed.clone())?;
+        let output = Output::open(chain.clone(), changed.clone())?;
         output.sink().pause();
 
-        // the input format is a placeholder: each packet starts a span in its own
-        let rate = output.rate() as usize;
-        let config = ardftsrc::PRESET_GOOD
-            .with_input_rate(rate)
-            .with_output_rate(rate)
-            .with_channels(2);
-        // rodio refuses a zero rate when the output opens, so the config is always valid
-        let resampler = RealtimeResampler::new(config)
-            .expect("PRESET_GOOD at the device's non-zero rate, in stereo, is a valid config");
+        let resampler = resampler(output.rate());
         let generation = cue.generation.load(Ordering::Relaxed);
         Ok(Self {
             output,
+            chain,
             cue,
             live: Arc::default(),
             spares: Spares::new(),
             changed,
             resampler,
             generation,
+            reopened: false,
         })
+    }
+
+    /// Whether the stream the output plays on reported an error and has to be opened again.
+    pub fn failed(&self) -> bool {
+        self.output.failed()
+    }
+
+    /// Opens the output again after the device invalidated its stream, and replaces what was
+    /// queued with a fresh, empty queue on the new one. The cue is left as it is: the caller
+    /// reopens its decoder at what was heard, clears the cue and arms it. The new stream plays
+    /// or stays paused as the old one was, since a writer like librespot is not told about the
+    /// reopen and would leave a paused stream silent. Returns whether the output opened; an
+    /// engine that gets `false` has to be rebuilt instead.
+    pub fn reopen(&mut self) -> bool {
+        let playing = !self.output.sink().is_paused();
+        let output = match Output::open(self.chain.clone(), self.changed.clone()) {
+            Ok(output) => output,
+            Err(error) => {
+                log::warn!("sink: cannot reopen the audio output: {error:#}");
+                return false;
+            }
+        };
+        match playing {
+            true => output.sink().play(),
+            false => output.sink().pause(),
+        }
+        log::info!("sink: reopened the audio output at {} Hz", output.rate());
+        self.resampler = resampler(output.rate());
+        self.output = output;
+        self.live = Arc::default();
+        self.generation = self.cue.generation.load(Ordering::Relaxed);
+        self.reopened = true;
+        true
+    }
+
+    /// Takes the flag `reopen` set, so the engine acts on a reopen once.
+    pub fn take_reopened(&mut self) -> bool {
+        std::mem::take(&mut self.reopened)
     }
 
     pub fn play(&mut self) -> Result<(), Gone> {
@@ -362,7 +400,12 @@ impl Paced {
     /// packet's length.
     pub fn write(&mut self, packet: Packet) -> Result<usize, Gone> {
         if self.output.failed() {
-            return Err(self.disconnected());
+            if !self.reopen() {
+                return Err(self.disconnected());
+            }
+            // the caller reopens its decoder at what was heard, so this packet is the old one
+            self.spares.keep(packet.samples);
+            return Ok(0);
         }
         if !self.cue.admit() {
             self.spares.keep(packet.samples);
@@ -401,6 +444,9 @@ impl Paced {
     /// Flush the resampler. This ends the stream, so it is for when nothing follows: the end of
     /// the queue, or a writer that stops.
     pub fn flush(&mut self) -> usize {
+        if self.output.failed() {
+            return 0;
+        }
         self.forget_cleared();
         let resampler = &mut self.resampler;
         if resampler.is_empty() {
@@ -518,6 +564,19 @@ pub fn packet(samples: Vec<f32>, channels: u16, rate: u32) -> Option<Packet> {
         channels: NonZero::new(channels)?,
         rate: NonZero::new(rate)?,
     })
+}
+
+/// A resampler for a device that runs at `rate`, ready for every packet at any rate, in stereo.
+/// The input rate is a placeholder: each packet starts a span in its own.
+fn resampler(rate: u32) -> RealtimeResampler {
+    let rate = rate as usize;
+    let config = ardftsrc::PRESET_GOOD
+        .with_input_rate(rate)
+        .with_output_rate(rate)
+        .with_channels(2);
+    // rodio refuses a zero rate when the output opens, so the config is always valid
+    RealtimeResampler::new(config)
+        .expect("PRESET_GOOD at the device's non-zero rate, in stereo, is a valid config")
 }
 
 #[cfg(test)]

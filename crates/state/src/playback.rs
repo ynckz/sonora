@@ -2696,6 +2696,8 @@ impl Playback {
     /// loaded, comes back empty, so its stream still reopens at the device's new rate. A failed
     /// track is left as it is.
     fn restart_output(&mut self, local: bool, cx: &mut Context<Self>) {
+        // the engine that held the track is being replaced, so nothing it said still holds
+        self.resume_ready = false;
         let running = match local {
             true => self.local_engine.is_some(),
             false => self.engine.is_some(),

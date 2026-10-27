@@ -976,6 +976,31 @@ fn audio_loop<F: Fetch>(
     let mut reported_at = Instant::now();
 
     loop {
+        // A stream the device invalidated is opened again here, at what was heard, so playback
+        // carries on from there instead of the engine being rebuilt around it.
+        if paced.failed() {
+            let reopened = paced.reopen();
+            // the decoder is reopened here, so the flag is not left for a later write
+            paced.take_reopened();
+            if !reopened {
+                paced.disconnected();
+                return;
+            }
+            resume(
+                fetch.as_ref(),
+                &mut current,
+                &mut joining,
+                &mut queued,
+                &mut written,
+                &mut heard,
+                &mut playing,
+                &mut paced,
+                &cue,
+                normalise,
+                &events,
+            );
+        }
+
         // anything but decoding means waiting for work rather than spinning: no
         // track, a paused one, or a full queue. A restored track sits paused
         // with an empty queue, which the old condition mistook for decoding.
@@ -1233,6 +1258,99 @@ fn audio_loop<F: Fetch>(
         match paced.write(chunk) {
             Ok(queued) => written += queued as u64,
             Err(_) => return,
+        }
+        if paced.take_reopened() {
+            resume(
+                fetch.as_ref(),
+                &mut current,
+                &mut joining,
+                &mut queued,
+                &mut written,
+                &mut heard,
+                &mut playing,
+                &mut paced,
+                &cue,
+                normalise,
+                &events,
+            );
+        }
+    }
+}
+
+/// Reopens the decoder after the output was reopened, at the position last heard, so playback
+/// carries on from there rather than from where the discarded queue had decoded to. A track
+/// whose decoder had already run out reopens from its join, and the track that followed it goes
+/// back in the queue. The cue is cleared and armed, so the first sample of the resumed track is
+/// reported like any other start.
+#[allow(clippy::too_many_arguments)]
+fn resume<F: Fetch>(
+    fetch: &F,
+    current: &mut Option<Playing<F>>,
+    joining: &mut Option<Join<F>>,
+    queued: &mut Option<(String, F::Loaded)>,
+    written: &mut u64,
+    heard: &mut Option<Mark>,
+    playing: &mut bool,
+    paced: &mut Paced,
+    cue: &Cue,
+    normalise: bool,
+    events: &UnboundedSender<PlaybackEvent>,
+) {
+    // A clear still waiting for the Play or Seek that follows it has already retired this
+    // decoder, and keeps writes refused until it arms the cue, so only the pause state is
+    // restored and the job opens the right decoder.
+    if cue.cleared() {
+        match *playing {
+            true => {
+                paced.play().ok();
+            }
+            false => paced.pause(),
+        }
+        return;
+    }
+    let at = heard.as_ref().map(|mark| mark.at(cue));
+    let next = current.take();
+    let (id, reopened) = match joining.take() {
+        // the decoder ran past the end of the track still being heard: reopen that one and put
+        // the track lined up behind it back in the queue
+        Some(join) => {
+            if let Some(next) = next {
+                *queued = Some((next.id, next.loaded));
+            }
+            let at = at.unwrap_or_default();
+            let reopened = Playing::open(fetch, &join.ended, join.loaded, at, 0, normalise, events);
+            (join.ended, reopened)
+        }
+        None => match next {
+            Some(held) => {
+                let at = at.unwrap_or(held.base);
+                let reopened =
+                    Playing::open(fetch, &held.id, held.loaded, at, 0, normalise, events);
+                (held.id, reopened)
+            }
+            None => return,
+        },
+    };
+    *current = reopened;
+    *written = 0;
+    *heard = current.as_ref().map(|held| held.mark(paced.rate()));
+    match current.is_some() {
+        true => {
+            cue.clear();
+            cue.arm();
+            match *playing {
+                true => {
+                    paced.play().ok();
+                }
+                false => paced.pause(),
+            }
+        }
+        false => {
+            log::warn!("playback: cannot reopen {id} after the output changed");
+            *playing = false;
+            events
+                .send(PlaybackEvent::Unavailable { id: Some(id) })
+                .ok();
         }
     }
 }

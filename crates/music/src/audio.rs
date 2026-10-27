@@ -130,7 +130,9 @@ impl Frames {
 
 /// What sits between the queue and the device: the analyzer listening ahead of the equalizer,
 /// then the equalizer and the volume ramp, with the spectrum tap and the meter listening at the
-/// end. Every engine builds one and hands it to the output.
+/// end. Every engine builds one and hands it to the output. Cloning shares every stage, so an
+/// output reopened on another stream hears the same music.
+#[derive(Clone)]
 pub struct Chain {
     pub volume: Volume,
     /// Hears the music ahead of the equalizer for the equalizer screen, shared like `meter`.
