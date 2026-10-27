@@ -336,6 +336,9 @@ struct Values {
     /// Whether the listener put Sonora offline, so it shows and plays only what was downloaded
     /// until they go online again.
     offline_mode: bool,
+    /// The proxy SoundCloud's api and media requests go through, for a service blocked where
+    /// the listener is. Empty leaves the system's proxy settings in charge.
+    soundcloud_proxy: String,
     equalizer: bool,
     /// The ten band gains an older Sonora saved. Read once to seed the profiles when there are
     /// none, never written back, and read leniently like the keys that replaced it.
@@ -566,6 +569,7 @@ impl Default for Values {
             gapless: true,
             keep_tracks: true,
             offline_mode: false,
+            soundcloud_proxy: String::new(),
             cache_gb: crate::vault::CACHE_GB,
             equalizer: false,
             equalizer_bands: Vec::new(),
@@ -948,6 +952,13 @@ impl AppSettings {
 
     pub fn offline_mode(&self) -> bool {
         self.values.offline_mode
+    }
+
+    /// The proxy SoundCloud's requests go through, or `None` when the system's proxy settings
+    /// are in charge. An address Sonora cannot use is still returned, so the settings field can
+    /// show and correct it; the clients ignore it and fall back to the system's settings.
+    pub fn soundcloud_proxy(&self) -> Option<&str> {
+        Some(self.values.soundcloud_proxy.trim()).filter(|proxy| !proxy.is_empty())
     }
 
     /// Whether Sonora shows up as a Spotify Connect device while a Spotify account is signed in.
@@ -1451,6 +1462,18 @@ impl AppSettings {
 
     pub fn set_offline_mode(&mut self, offline_mode: bool, cx: &mut Context<Self>) {
         self.values.offline_mode = offline_mode;
+        self.schedule_save(cx);
+    }
+
+    /// Saves the proxy SoundCloud's requests go through, which clients built after this call
+    /// pick up. Empty turns it off.
+    pub fn set_soundcloud_proxy(&mut self, proxy: impl Into<String>, cx: &mut Context<Self>) {
+        let proxy = proxy.into().trim().to_owned();
+        if self.values.soundcloud_proxy == proxy {
+            return;
+        }
+        self.values.soundcloud_proxy = proxy;
+        music::proxy::set(self.soundcloud_proxy());
         self.schedule_save(cx);
     }
 
@@ -2483,6 +2506,9 @@ impl AppSettings {
         let (before, now) = (&previous.appearance, &self.values.appearance);
         if previous.language != self.values.language {
             i18n::set(i18n::resolve(&self.values.language));
+        }
+        if previous.soundcloud_proxy != self.values.soundcloud_proxy {
+            music::proxy::set(self.soundcloud_proxy());
         }
         if before.icons != now.icons {
             icons::set(&now.icons);

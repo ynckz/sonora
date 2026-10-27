@@ -9,7 +9,7 @@ use state::{CdmState, Sleep};
 use ui::{ActiveTheme as _, Button, MenuItem, OptionCard, Picker, Scrubber, Switch, Text};
 
 use super::rows::{grid, segmented};
-use super::{Group, SettingsView, Slot};
+use super::{Group, Row, SettingsView, Slot};
 use crate::shared::confirm::{Confirm, Kind};
 
 /// How many quality cards a row is laid out for, however few levels a service has.
@@ -53,6 +53,9 @@ impl SettingsView {
                     .rows([Slot::StreamFormat, Slot::StreamBitrate]),
             );
         }
+        groups.push(
+            Group::new("settings-group-network", "icons/link.svg").rows([Slot::SoundCloudProxy]),
+        );
         if self.drm.read(cx).shown(cx) {
             groups.push(
                 Group::new("settings-group-protected", "icons/lock.svg").rows([Slot::Widevine]),
@@ -268,6 +271,44 @@ impl SettingsView {
         );
 
         self.row(t!("settings-stream-bitrate"), picker.into_any_element())
+    }
+
+    /// The proxy SoundCloud's api and media requests go through, for a service blocked in the
+    /// listener's country. The field keeps what is typed, while only an address Sonora can use
+    /// reaches the setting; Apply reopens a signed-in SoundCloud account so the new client
+    /// takes over at once.
+    pub(super) fn soundcloud_proxy_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let proxy = self.soundcloud_proxy.read(cx).text().trim().to_owned();
+        let valid = music::proxy::valid(&proxy);
+
+        let apply = Button::new("soundcloud-proxy-apply")
+            .label(t!("settings-soundcloud-proxy-apply"))
+            .small()
+            .outline()
+            .disabled(!valid)
+            .on_click(cx.listener(|this, _, _, cx| {
+                let proxy = this.soundcloud_proxy.read(cx).text().trim().to_owned();
+                this.settings
+                    .update(cx, |settings, cx| settings.set_soundcloud_proxy(proxy, cx));
+                this.session
+                    .update(cx, |session, cx| session.reopen("soundcloud", cx));
+            }));
+
+        Row::new(
+            t!("settings-soundcloud-proxy"),
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(div().w(Picker::WIDE).child(self.soundcloud_proxy.clone()))
+                .child(apply)
+                .into_any_element(),
+        )
+        .detail(match valid {
+            true => t!("settings-soundcloud-proxy-detail"),
+            false => t!("settings-soundcloud-proxy-invalid"),
+        })
+        .into_any_element()
     }
 
     pub(super) fn stay_awake_row(&self, cx: &mut Context<Self>) -> AnyElement {

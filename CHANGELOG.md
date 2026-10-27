@@ -10,7 +10,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Sign in to SoundCloud and play its music. Your liked tracks and followed artists fill the
-  library, and the wider catalogue — tracks, playlists, artists and albums — is there to search.## [0.44.2] - 2026-10-25
+  library, and the wider catalogue — tracks, playlists, artists and albums — is there to search.
+- Play SoundCloud tracks blocked in your country by routing SoundCloud through a proxy. Set it in
+  Settings → Playback under Network.
+
+## [0.44.2] - 2026-10-25
 
 ### Fixed
 

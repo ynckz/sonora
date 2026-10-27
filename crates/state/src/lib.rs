@@ -239,6 +239,7 @@ pub fn init(
         settings.read(cx).keep_tracks(),
         vault::bytes(settings.read(cx).cache_gb()),
     );
+    music::proxy::set(settings.read(cx).soundcloud_proxy());
     let session =
         cx.new(|cx| Session::new(providers, local_provider, settings.clone(), io.clone(), cx));
     let network = cx.new(|cx| Network::new(session.clone(), settings.clone(), io.clone(), cx));

@@ -74,12 +74,16 @@ struct Inner {
 }
 
 impl SoundCloudClient {
-    /// Builds an http client for the SoundCloud api.
+    /// Builds an http client for the SoundCloud api, through the listener's proxy when one is
+    /// set.
     fn http() -> Result<reqwest::Client> {
-        reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (X11; Linux x86_64; rv:142.0) Gecko/20100101 Firefox/142.0")
-            .build()
-            .context("cannot build the soundcloud http client")
+        crate::proxy::apply(
+            reqwest::Client::builder().user_agent(
+                "Mozilla/5.0 (X11; Linux x86_64; rv:142.0) Gecko/20100101 Firefox/142.0",
+            ),
+        )
+        .build()
+        .context("cannot build the soundcloud http client")
     }
 
     /// Signs in with an `oauth_token` cookie: extracts the web app's `client_id` and checks the

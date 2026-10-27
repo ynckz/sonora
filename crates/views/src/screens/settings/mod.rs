@@ -101,6 +101,7 @@ enum Slot {
     StreamQuality,
     StreamFormat,
     StreamBitrate,
+    SoundCloudProxy,
     Widevine,
     OutputDevice,
     OutputFailure,
@@ -254,6 +255,8 @@ pub struct SettingsView {
     scrobble_second: Entity<Input>,
     /// The field for the custom name Sonora goes by in Spotify's device list.
     connect_name: Entity<Input>,
+    /// The proxy SoundCloud's requests go through.
+    soundcloud_proxy: Entity<Input>,
     /// The service whose link dialog is open, by slug.
     scrobble_prompt: Option<&'static str>,
     /// The provider whose sign-in choice is up, by slug and name.
@@ -372,6 +375,22 @@ impl SettingsView {
         })
         .detach();
 
+        let soundcloud_proxy = cx.new(|cx| Input::new("settings-soundcloud-proxy-hint", cx));
+        let saved_proxy = settings.read(cx).soundcloud_proxy().map(str::to_owned);
+        if let Some(proxy) = saved_proxy {
+            soundcloud_proxy.update(cx, |input, cx| input.set_text(proxy, cx));
+        }
+        cx.observe(&soundcloud_proxy, |this, input, cx| {
+            // A half-typed address stays in the field without replacing the working proxy.
+            let proxy = input.read(cx).text().trim().to_owned();
+            if music::proxy::valid(&proxy) {
+                this.settings
+                    .update(cx, |settings, cx| settings.set_soundcloud_proxy(proxy, cx));
+            }
+            cx.notify();
+        })
+        .detach();
+
         let popovers = Popovers::default();
         let output_picker = cx.new(|cx| OutputPicker::new(outputs.clone(), popovers.clone(), cx));
         let previews = preview::Previews::new(cx);
@@ -415,6 +434,7 @@ impl SettingsView {
             scrobble_first: cx.new(|cx| Input::new("settings-scrobble-key", cx)),
             scrobble_second: cx.new(|cx| Input::new("settings-scrobble-secret", cx)),
             connect_name,
+            soundcloud_proxy,
             scrobble_prompt: None,
             languages,
             typefaces,
@@ -794,6 +814,10 @@ impl SettingsView {
                 t!("settings-stream-bitrate"),
                 t!("settings-stream-bitrate-detail"),
             ),
+            Slot::SoundCloudProxy => (
+                t!("settings-soundcloud-proxy"),
+                t!("settings-soundcloud-proxy-detail"),
+            ),
             Slot::Sleep => (t!("settings-sleep"), t!("settings-sleep-detail")),
             Slot::StayAwake => (t!("settings-stay-awake"), t!("settings-stay-awake-detail")),
             Slot::Widevine => (t!("settings-widevine"), self.widevine_detail(cx)),
@@ -948,6 +972,7 @@ impl SettingsView {
             Slot::StreamQuality => self.stream_quality_row(cx),
             Slot::StreamFormat => self.stream_format_row(cx),
             Slot::StreamBitrate => self.stream_bitrate_row(cx),
+            Slot::SoundCloudProxy => self.soundcloud_proxy_row(cx),
             Slot::Sleep => self.sleep_row(cx),
             Slot::StayAwake => self.stay_awake_row(cx),
             Slot::OutputDevice => self.output_device_row(),

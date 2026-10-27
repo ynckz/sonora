@@ -376,13 +376,15 @@ async fn fetch(http: &reqwest::Client, url: &str) -> Result<Bytes> {
 }
 
 /// The http client a track's segments come through, which gives up on a stalled request sooner
-/// than the api client does.
+/// than the api client does. Segments go through the listener's proxy when one is set.
 fn media_http() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .read_timeout(Duration::from_secs(8))
-        .build()
-        .context("cannot build the soundcloud media client")
+    crate::proxy::apply(
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .read_timeout(Duration::from_secs(8)),
+    )
+    .build()
+    .context("cannot build the soundcloud media client")
 }
 
 /// The encoding of the preset a track was served as.

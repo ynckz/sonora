@@ -786,6 +786,23 @@ impl Session {
         }
     }
 
+    /// Reopens the active account after a setting changed the way its provider reaches the
+    /// network, so a client built from the new setting takes over. Only `slug` is reopened,
+    /// and only while it is the account on show; any other provider picks the setting up when
+    /// it next connects.
+    pub fn reopen(&mut self, slug: &str, cx: &mut Context<Self>) {
+        if self.provider_slug() != Some(slug) {
+            return;
+        }
+        if !matches!(
+            self.state,
+            SessionState::SignedIn(_) | SessionState::Offline(_)
+        ) {
+            return;
+        }
+        self.restore(cx);
+    }
+
     fn remaining(&self) -> Option<usize> {
         self.active
             .filter(|index| self.providers[*index].stored())

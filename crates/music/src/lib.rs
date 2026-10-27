@@ -24,6 +24,7 @@ pub mod netease;
 pub mod output;
 pub mod potoken;
 pub mod progress;
+pub mod proxy;
 pub mod scrobble;
 mod sink;
 pub mod soundcloud;
