@@ -495,7 +495,7 @@ jobs:
 
   flatpak-repo:
     needs: flatpak
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') && github.repository == 'sonorahq/sonora'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -586,7 +586,7 @@ jobs:
           git push --force "https://x-access-token:$TOKEN@github.com/$GITHUB_REPOSITORY" flatpak-repo
 
   release:
-    needs: [build, bundle, appimage, flatpak, flatpak-repo]
+    needs: [build, bundle, appimage, flatpak]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
@@ -639,7 +639,7 @@ jobs:
 
   announce:
     needs: release
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') && github.repository == 'sonorahq/sonora'
     uses: ./.github/workflows/announce.yml
     secrets: inherit
     with:
