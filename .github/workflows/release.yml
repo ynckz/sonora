@@ -620,14 +620,15 @@ jobs:
       - name: checksums
         run: cd dist && shasum -a 256 * > SHA256SUMS
 
+      - uses: taiki-e/install-action@parse-changelog
+
       - name: release notes
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
-            -f tag_name="$TAG" --jq .body > notes.md
+          version="${TAG#v}"
+          parse-changelog CHANGELOG.md "$version" > notes.md
           printf '\n[Code signing policy](https://github.com/%s#code-signing-policy)\n' "$GITHUB_REPOSITORY" >> notes.md
 
       - uses: softprops/action-gh-release@v2
