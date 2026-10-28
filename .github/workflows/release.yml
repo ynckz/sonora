@@ -28,8 +28,6 @@ jobs:
             os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04-arm
-          - target: aarch64-apple-darwin
-            os: macos-15
           - target: x86_64-apple-darwin
             os: macos-15-intel
           - target: x86_64-pc-windows-msvc
@@ -140,7 +138,8 @@ jobs:
   bundle:
     name: macos app bundle
     needs: build
-    runs-on: macos-15
+    # The bundle is built on an Intel runner, where hdiutil and codesign behave the same.
+    runs-on: ${{ github.repository == 'sonorahq/sonora' && 'macos-15' || 'macos-15-intel' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -179,10 +178,23 @@ jobs:
             Sonora.app/Contents/MacOS \
             Sonora.app/Contents/Resources
 
-          lipo -create \
-            -output Sonora.app/Contents/MacOS/sonora \
-            darwin/sonora-aarch64-apple-darwin \
-            darwin/sonora-x86_64-apple-darwin
+          # Both slices make a universal binary; a single one still makes a working bundle.
+          slices=()
+          for slice in darwin/sonora-aarch64-apple-darwin darwin/sonora-x86_64-apple-darwin
+          do
+            if [ -f "$slice" ]; then
+              slices+=("$slice")
+            fi
+          done
+          if [ ${#slices[@]} -eq 0 ]; then
+            echo "no darwin binary was built" >&2
+            exit 1
+          fi
+          if [ ${#slices[@]} -eq 1 ]; then
+            cp "${slices[0]}" Sonora.app/Contents/MacOS/sonora
+          else
+            lipo -create -output Sonora.app/Contents/MacOS/sonora "${slices[@]}"
+          fi
           chmod +x Sonora.app/Contents/MacOS/sonora
           lipo -info Sonora.app/Contents/MacOS/sonora
 
