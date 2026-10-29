@@ -28,6 +28,8 @@ jobs:
             os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04-arm
+          - target: aarch64-apple-darwin
+            os: macos-15
           - target: x86_64-apple-darwin
             os: macos-15-intel
           - target: x86_64-pc-windows-msvc
@@ -138,8 +140,7 @@ jobs:
   bundle:
     name: macos app bundle
     needs: build
-    # The bundle is built on an Intel runner, where hdiutil and codesign behave the same.
-    runs-on: ${{ github.repository == 'sonorahq/sonora' && 'macos-15' || 'macos-15-intel' }}
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
 
