@@ -9,7 +9,7 @@ use std::rc::{Rc, Weak};
 use anyhow::{Context as _, Result};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2, ICoreWebView2_2,
-    ICoreWebView2Controller, ICoreWebView2Environment10,
+    ICoreWebView2Controller, ICoreWebView2Environment10, ICoreWebView2EnvironmentOptions,
 };
 use webview2_com::{
     AddScriptToExecuteOnDocumentCreatedCompletedHandler, CoTaskMemPWSTR,
@@ -59,6 +59,7 @@ impl Window {
             hwnd,
             &target.url,
             target.script.clone(),
+            target.proxy.clone(),
             Rc::downgrade(&browser),
         );
         if let Err(error) = begun {
@@ -197,6 +198,7 @@ fn begin_environment(
     hwnd: HWND,
     url: &str,
     script: Option<String>,
+    proxy: Option<String>,
     browser: Weak<RefCell<Option<Browser>>>,
 ) -> Result<()> {
     let url = url.to_string();
@@ -212,12 +214,19 @@ fn begin_environment(
             Ok(())
         },
     ));
-    let folder = user_data_folder()?;
+    // Chromium names its proxy as a browser argument and drops the credentials an address carries,
+    // so the window is pointed at a local relay that adds them.
+    let options = proxy.map(|proxy| {
+        let options = webview2_com::CoreWebView2EnvironmentOptions::default();
+        unsafe { options.set_additional_browser_arguments(format!("--proxy-server={proxy}")) };
+        ICoreWebView2EnvironmentOptions::from(options)
+    });
+    let folder = user_data_folder(options.is_some())?;
     unsafe {
         CreateCoreWebView2EnvironmentWithOptions(
             PCWSTR::null(),
             PCWSTR(folder.as_ptr()),
-            None,
+            options.as_ref(),
             &handler,
         )
     }
@@ -226,11 +235,18 @@ fn begin_environment(
 
 /// Sonora's own cache folder for WebView2's browser state, as a wide string. WebView2 otherwise
 /// writes beside the executable, which an installed copy under Program Files cannot do.
-fn user_data_folder() -> Result<Vec<u16>> {
+///
+/// A window that goes through the relay gets a folder of its own: browser arguments only apply
+/// when WebView2 starts its browser process, and a proof-of-origin page may already have started
+/// one in the shared folder.
+fn user_data_folder(proxied: bool) -> Result<Vec<u16>> {
     let folder = dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("sonora")
-        .join("webview2");
+        .join(match proxied {
+            true => "webview2-proxy",
+            false => "webview2",
+        });
     std::fs::create_dir_all(&folder)
         .with_context(|| format!("cannot create {}", folder.display()))?;
     Ok(wide(&folder.to_string_lossy()))

@@ -126,6 +126,7 @@ impl PoToken {
             title: String::new(),
             agent: None,
             script: Some(include_str!("potoken.js").to_string()),
+            proxy: None,
         };
         match webview::Page::open(target) {
             Ok(page) => {

@@ -68,6 +68,11 @@ pub struct Target {
     /// Javascript to run in every page the window loads, before the page's own scripts. A window
     /// with one is a scripted window and is never shown.
     pub script: Option<String>,
+    /// An HTTP proxy to load the page through, as `http://host:port` with no credentials, for a
+    /// provider that is blocked where the listener is. Only the Windows backend points its engine
+    /// at it; neither WKWebView nor WebKitGTK takes a proxy for one view, so the other backends
+    /// load the page directly.
+    pub proxy: Option<String>,
 }
 
 impl Target {
