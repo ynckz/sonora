@@ -140,7 +140,9 @@ jobs:
   bundle:
     name: macos app bundle
     needs: build
-    runs-on: macos-15
+    # An Intel runner, because the arm64 pool is often starved and a job that waits for one is
+    # cancelled after fifteen minutes. Both slices are built elsewhere and only joined here.
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v5
 
