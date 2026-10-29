@@ -75,6 +75,16 @@ jobs:
       - name: build
         run: cargo build --release --locked --package sonora --target ${{ matrix.target }}
 
+      # The arm64 macOS pool is starved on forks, so the second slice is cross-compiled on the
+      # Intel runner instead of waiting for a native one. A failure here still leaves a working
+      # Intel bundle behind, which the adaptive lipo below accepts.
+      - name: cross-build the arm64 slice
+        if: matrix.target == 'x86_64-apple-darwin'
+        continue-on-error: true
+        run: |
+          rustup target add aarch64-apple-darwin
+          cargo build --release --locked --package sonora --target aarch64-apple-darwin
+
       - name: sccache stats
         if: always()
         run: sccache --show-stats
@@ -88,9 +98,12 @@ jobs:
           mkdir -p dist
           case "$RUNNER_OS" in
             macOS)
-              cp \
-                "target/$TARGET/release/sonora" \
-                "dist/sonora-$TARGET"
+              for target in "$TARGET" aarch64-apple-darwin
+              do
+                if [ -f "target/$target/release/sonora" ]; then
+                  cp "target/$target/release/sonora" "dist/sonora-$target"
+                fi
+              done
               ;;
 
             Windows)
